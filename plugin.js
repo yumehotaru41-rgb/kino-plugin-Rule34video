@@ -44,14 +44,10 @@ function hasCredentials() {
   return !!(user && password);
 }
 
-/**
- * Soft login: never blocks public videos.
- * force=true only for actions that truly need a session.
- */
+/** Soft login: never blocks public videos. */
 async function ensureLogin(force) {
   await null;
   if (!hasCredentials()) return false;
-
   try {
     const probe = await kino.fetch(BASE + "/edit-profile/", {
       headers: headers(),
@@ -61,19 +57,14 @@ async function ensureLogin(force) {
       cacheMemberId(probe.text());
       return true;
     }
-
-    const loginPage = await kino.fetch(BASE + "/login/", {
-      headers: headers(),
-    });
+    const loginPage = await kino.fetch(BASE + "/login/", { headers: headers() });
     const loginHtml = loginPage.text();
     const csrfM = loginHtml.match(
       /name="remember_me_csrf_token"\s+value="([^"]+)"/
     );
     const csrf = csrfM ? csrfM[1] : "";
-
     const user = (kino.config.get("user") || "").trim();
     const password = kino.config.get("password") || "";
-
     const r = await kino.fetch(BASE + "/login/", {
       method: "POST",
       headers: headers({
@@ -93,13 +84,11 @@ async function ensureLogin(force) {
       },
       redirect: "manual",
     });
-
     if (r.status === 401 || r.status === 403) {
       if (force)
         throw kino.error("auth_required", "usuario o contraseña incorrectos");
       return false;
     }
-
     const check = await kino.fetch(BASE + "/edit-profile/", {
       headers: headers(),
       redirect: "manual",
@@ -141,17 +130,39 @@ async function getMemberId() {
   }
 }
 
+/**
+ * Parse listing cards. ref = "id" or "id/slug" so resolve can open the page.
+ * Site requires slug on /video/{id}/{slug}/ ; /video/{id}/ alone is 404 on many titles.
+ * /popup-video/{id}/ works with id only and is the primary resolve path.
+ */
 function parseListing(html) {
   const items = [];
   const seen = {};
 
+  function push(id, slug, title, poster, runtimeMinutes) {
+    if (!id || seen[id]) return;
+    seen[id] = true;
+    const ref = slug ? id + "/" + slug : id;
+    items.push({
+      id: id,
+      ref: ref,
+      title: (title || "").trim() || "Video " + id,
+      kind: "movie",
+      poster: poster || undefined,
+      runtimeMinutes: runtimeMinutes,
+      adult: true,
+    });
+  }
+
+  // Favourites grid
   const favRe =
     /data-video-card-id="(\d+)"[^>]*data-title="([^"]*)"[^>]*data-url="([^"]+)"/g;
   let fm;
   while ((fm = favRe.exec(html)) !== null) {
     const id = fm[1];
-    if (seen[id]) continue;
-    seen[id] = true;
+    const url = fm[2] ? fm[3] : fm[3];
+    const title = fm[2];
+    const slugM = String(url).match(/\/video\/\d+\/([^/?#]+)/);
     let poster;
     const around = html.slice(Math.max(0, fm.index - 50), fm.index + 1500);
     const imgM = around.match(
@@ -165,69 +176,66 @@ function parseListing(html) {
       if (!isNaN(secs) && secs > 0)
         runtimeMinutes = Math.max(1, Math.round(secs / 60));
     }
-    items.push({
-      id: id,
-      ref: id,
-      title: (fm[2] || "").trim() || "Video " + id,
-      kind: "movie",
-      poster: poster,
-      runtimeMinutes: runtimeMinutes,
-      adult: true,
-    });
+    push(id, slugM ? slugM[1] : null, title, poster, runtimeMinutes);
   }
 
+  // Standard cards: item thumb video_*
   const blocks = html.split(/<div class="item thumb video_/);
   for (let i = 1; i < blocks.length; i++) {
     const block = blocks[i];
     const hrefM = block.match(
-      /href="(https?:\/\/rule34video\.com\/video\/(\d+)\/[^"]+)"/
+      /href="https?:\/\/rule34video\.com\/video\/(\d+)\/([^"/?#]+)\/?"/
     );
-    if (!hrefM) continue;
-    const id = hrefM[2];
-    if (seen[id]) continue;
-    seen[id] = true;
-
+    if (!hrefM) {
+      const idOnly = block.match(
+        /href="https?:\/\/rule34video\.com\/video\/(\d+)\/?"/
+      );
+      if (!idOnly) continue;
+      const titleM =
+        block.match(/class="thumb_title">([^<]+)/) ||
+        block.match(/title="([^"]+)"/);
+      let poster;
+      const imgM = block.match(
+        /src="(https:\/\/rule34video\.com\/contents\/videos_screenshots\/[^"]+)"/
+      );
+      if (imgM) poster = imgM[1];
+      const timeM = block.match(/class="time">([^<]+)/);
+      push(
+        idOnly[1],
+        null,
+        titleM ? titleM[1] : null,
+        poster,
+        timeM ? parseRuntime(timeM[1]) : undefined
+      );
+      continue;
+    }
+    const id = hrefM[1];
+    const slug = hrefM[2];
     const titleM =
       block.match(/class="thumb_title">([^<]+)/) ||
       block.match(/title="([^"]+)"/);
-    const title = titleM ? titleM[1].trim() : "Video " + id;
-
     let poster;
     const imgM = block.match(
       /src="(https:\/\/rule34video\.com\/contents\/videos_screenshots\/[^"]+)"/
     );
     if (imgM) poster = imgM[1];
-
     const timeM = block.match(/class="time">([^<]+)/);
-    const runtimeMinutes = timeM ? parseRuntime(timeM[1]) : undefined;
-
-    items.push({
-      id: id,
-      ref: id,
-      title: title,
-      kind: "movie",
-      poster: poster,
-      runtimeMinutes: runtimeMinutes,
-      adult: true,
-    });
+    push(
+      id,
+      slug,
+      titleM ? titleM[1] : slug.replace(/-/g, " "),
+      poster,
+      timeM ? parseRuntime(timeM[1]) : undefined
+    );
   }
 
+  // Fallback: any video links
   if (items.length === 0) {
     const linkRe =
       /href="https?:\/\/rule34video\.com\/video\/(\d+)\/([^"?#]+)\/?"/g;
     let lm;
     while ((lm = linkRe.exec(html)) !== null) {
-      const id = lm[1];
-      if (seen[id]) continue;
-      seen[id] = true;
-      const slug = decodeURIComponent(lm[2].replace(/-/g, " "));
-      items.push({
-        id: id,
-        ref: id,
-        title: slug || "Video " + id,
-        kind: "movie",
-        adult: true,
-      });
+      push(lm[1], lm[2], lm[2].replace(/-/g, " "), null, undefined);
     }
   }
 
@@ -239,8 +247,7 @@ function nextCursor(html, currentPath) {
     /href="(\?from_fav_videos=\d+)"[^>]*>\s*(?:Next|\d+)/i
   );
   if (favNext && currentPath) {
-    const base = String(currentPath).split("?")[0];
-    return base + favNext[1];
+    return String(currentPath).split("?")[0] + favNext[1];
   }
   const favLink = html.match(
     /href="(\/members\/\d+\/favourites\/videos\/\?from_fav_videos=\d+)"/
@@ -274,7 +281,6 @@ function nextCursor(html, currentPath) {
     html.match(/href="(\/top-rated\/\d+\/)"/) ||
     html.match(/href="(\/most-popular\/\d+\/)"/);
   if (m) return m[1];
-
   const next = html.match(/href="([^"]+)"[^>]*>\s*Next/i);
   if (next) return next[1];
   return undefined;
@@ -291,17 +297,42 @@ async function fetchPage(path) {
   return r.text();
 }
 
+/**
+ * Load video HTML. Order matters:
+ * 1) /popup-video/{id}/  — works with id only (current site)
+ * 2) /video/{id}/{slug}/ — classic page when we have slug
+ * 3) /video/{id}/        — may 404 on newer uploads
+ */
+async function fetchVideoHtml(id, slug) {
+  const paths = [];
+  paths.push("/popup-video/" + id + "/");
+  if (slug) paths.push("/video/" + id + "/" + slug + "/");
+  paths.push("/video/" + id + "/");
+  paths.push("/videos/" + id + "/");
+
+  let lastErr = null;
+  for (let i = 0; i < paths.length; i++) {
+    try {
+      return await fetchPage(paths[i]);
+    } catch (e) {
+      lastErr = e;
+      if (e && e.code === "not_found") continue;
+      // network / rate limit: stop
+      if (e && (e.code === "rate_limited" || e.code === "unavailable")) throw e;
+    }
+  }
+  if (lastErr) throw lastErr;
+  throw kino.error("not_found");
+}
+
 export async function search(query) {
   await ensureLogin(false);
   const q = sanitizeQuery(query.q || "");
   if (!q) return [];
 
   let path;
-  if (query.cursor) {
-    path = query.cursor;
-  } else {
-    path = "/search/" + encodeURIComponent(q).replace(/%20/g, "+") + "/";
-  }
+  if (query.cursor) path = query.cursor;
+  else path = "/search/" + encodeURIComponent(q).replace(/%20/g, "+") + "/";
 
   let html;
   try {
@@ -345,20 +376,6 @@ export async function home() {
   }
 
   try {
-    const c3d = await fetchPage("/categories/3d/");
-    const items3d = parseListing(c3d);
-    if (items3d.length) {
-      rows.push({
-        id: "cat-3d",
-        title: "3D",
-        items: items3d.slice(0, 40),
-        ref: "/categories/3d/",
-        genre: "otros",
-      });
-    }
-  } catch (e) {}
-
-  try {
     const latestHtml = await fetchPage("/latest-updates/");
     const latest = parseListing(latestHtml);
     if (latest.length) {
@@ -400,6 +417,21 @@ export async function home() {
     }
   } catch (e) {}
 
+  // 3D at the end
+  try {
+    const c3d = await fetchPage("/categories/3d/");
+    const items3d = parseListing(c3d);
+    if (items3d.length) {
+      rows.push({
+        id: "cat-3d",
+        title: "3D",
+        items: items3d.slice(0, 40),
+        ref: "/categories/3d/",
+        genre: "otros",
+      });
+    }
+  } catch (e) {}
+
   return rows;
 }
 
@@ -413,7 +445,6 @@ export async function browse(ref, cursor) {
 }
 
 function extractFormats(html) {
-  const formats = [];
   const seenQ = {};
 
   function add(quality, url) {
@@ -430,14 +461,13 @@ function extractFormats(html) {
     seenQ[q] = url;
   }
 
-  const dlRe = /href="([^"]*get_file[^"]*)"[^>]{0,200}>([^<]{0,40})/gi;
+  const dlRe = /href="([^"]*get_file[^"]*)"[^>]{0,300}>([^<]{0,60})/gi;
   let m;
   while ((m = dlRe.exec(html)) !== null) {
-    const url = m[1];
     const label = m[2] || "";
-    const qm = label.match(/(\d+)\s*p/i) || url.match(/_(\d+)p?\.mp4/i);
+    const qm = label.match(/(\d+)\s*p/i) || m[1].match(/_(\d+)p?\.mp4/i);
     const q = qm ? parseInt(qm[1], 10) : 0;
-    if (url.indexOf("get_file") !== -1) add(q, url);
+    if (m[1].indexOf("get_file") !== -1) add(q, m[1]);
   }
 
   const pairs = [
@@ -448,14 +478,12 @@ function extractFormats(html) {
     ["video_alt_url4", "video_alt_url4_text"],
   ];
   for (let i = 0; i < pairs.length; i++) {
-    const uKey = pairs[i][0];
-    const tKey = pairs[i][1];
-    const uM = html.match(new RegExp(uKey + ":\\s*'([^']+)'"));
-    const tM = html.match(new RegExp(tKey + ":\\s*'([^']+)'"));
+    const uM = html.match(new RegExp(pairs[i][0] + ":\\s*'([^']+)'"));
+    const tM = html.match(new RegExp(pairs[i][1] + ":\\s*'([^']+)'"));
     if (uM) {
       let q = 0;
       if (tM) {
-        const n = parseInt(tM[1], 10);
+        const n = parseInt(String(tM[1]).replace(/p/i, ""), 10);
         if (!isNaN(n)) q = n;
       }
       if (!q) {
@@ -496,21 +524,25 @@ function pickFormat(formats, preferred) {
 export async function resolve(ref) {
   await ensureLogin(false);
 
-  const id = String(ref).replace(/[^\d]/g, "");
+  const raw = String(ref || "").trim();
+  // Accept: "123", "123/slug", full URL
+  let id = "";
+  let slug = "";
+  const urlM = raw.match(/\/video\/(\d+)(?:\/([^/?#]+))?/);
+  const popM = raw.match(/\/popup-video\/(\d+)/);
+  if (urlM) {
+    id = urlM[1];
+    slug = urlM[2] || "";
+  } else if (popM) {
+    id = popM[1];
+  } else {
+    const parts = raw.replace(/^\/+/, "").split("/");
+    id = String(parts[0] || "").replace(/[^\d]/g, "");
+    slug = parts[1] ? String(parts[1]).replace(/[^a-zA-Z0-9_-]/g, "") : "";
+  }
   if (!id) throw kino.error("not_found");
 
-  let html;
-  try {
-    html = await fetchPage("/video/" + id + "/");
-  } catch (e) {
-    try {
-      html = await fetchPage("/videos/" + id + "/");
-    } catch (e2) {
-      if (e && e.code === "not_found") throw e;
-      throw kino.error("unavailable", "no se pudo abrir el video");
-    }
-  }
-
+  const html = await fetchVideoHtml(id, slug);
   const formats = extractFormats(html);
   if (!formats.length) {
     throw kino.error("unavailable", "no se encontró el archivo de video");
