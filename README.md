@@ -1,35 +1,27 @@
-# Rule34Video – plugin de Kino
+# Rule34Video – plugin de Kino (v1.2.0)
 
 Fuente de video para [rule34video.com](https://rule34video.com).
 
 ## Qué hace
 
-- **Búsqueda** por título, tags o artistas (consulta limitada a 80 caracteres).
-- **Inicio** con filas: Lo más nuevo, Mejor valorados, Más populares.
-- **Mis favoritos**: fila en Inicio **solo si inicias sesión** (usuario y contraseña en ajustes).
-- **Calidad de video** configurable: mejor disponible, 1080p, 720p, 480p o 360p.
-- **Inicio de sesión** opcional (usuario / contraseña del sitio).
-- Contenido marcado como `adult: true`.
+- **Búsqueda** por título, tags o artistas (máx. 80 caracteres).
+- **Inicio**:
+  - **Mis favoritos** (solo con sesión iniciada)
+  - **3D** (categoría del sitio)
+  - Lo más nuevo / Mejor valorados / Más populares
+- **Calidad**: mejor disponible, 1080p, 720p, 480p o 360p.
+- Login opcional: si falla, los videos públicos siguen funcionando.
+- Contenido `adult: true`.
 
-## Instalar en Kino
+## Instalar / actualizar
 
-1. Publica este repositorio en GitHub (público) con el topic `kino-plugin`.
-2. En Kino: **Ajustes → Plugins → Agregar** y escribe `usuario/repo`.
-3. Acepta los hosts y, si quieres, configura calidad e inicia sesión.
+1. Sube la carpeta a GitHub (público, topic `kino-plugin`) o reinstala en Kino.
+2. Si ves *«Este plugin ya no tiene este título»*: actualiza el plugin y abre el video otra vez desde **Buscar** o **Inicio** (los de «Continuar viendo» de una versión anterior pueden quedar huérfanos).
 
-## Probar en local
+## Cambios 1.2.0
 
-Con el SDK de Kino (carpeta `sdk/` de cualquier plantilla oficial):
-
-```bash
-node sdk/validate.mjs .
-node sdk/run.mjs . search "anime"
-node sdk/run.mjs . resolve 3065157
-```
-
-## Notas
-
-- Los enlaces de reproducción usan los tokens del sitio (`v-acctoken`); caducan tras un tiempo.
-- No se necesita cuenta para buscar ni reproducir la mayoría de videos públicos.
-- La fila **Mis favoritos** solo aparece cuando hay sesión válida y el sitio devuelve favoritos.
-- `streamHosts: "any"` está declarado porque los `get_file` pueden salir de hosts variables del CDN del sitio.
+- Login suave (no bloquea reproducción pública).
+- Extracción de calidades reforzada (download + flashvars + JSON-LD).
+- Fallback `/video/` y `/videos/`.
+- Headers Referer/User-Agent en el stream.
+- Sección **3D** en Inicio.

@@ -1,10 +1,10 @@
 {
   "id": "rule34video",
   "name": "Rule34Video",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "apiVersion": 6,
   "entry": "plugin.js",
-  "description": "Videos de rule34video.com: busca por título, tags o artistas y reproduce en la calidad que elijas.",
+  "description": "Videos de rule34video.com: busca por título, tags o artistas. Secciones 3D, favoritos (con sesión) y calidad configurable.",
   "author": "community",
   "homepage": "https://rule34video.com",
   "hosts": [
